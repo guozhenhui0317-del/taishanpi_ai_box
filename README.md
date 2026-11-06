@@ -1,0 +1,2 @@
+# taishanpi_ai_box
+是用立创泰山派rk3566制作的aibox
