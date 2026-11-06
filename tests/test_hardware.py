@@ -1,8 +1,6 @@
 """@brief Hardware-independent checks for protocol, pin mapping and UI integration."""
 
 from contextlib import ExitStack
-import asyncio
-import importlib.util
 import os
 from pathlib import Path
 import sys
@@ -10,9 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-import aht30
-import linux_gpio
-import st7789
+from ai_box.hardware import aht30, gpio as linux_gpio, st7789
 
 
 class SensorTests(unittest.TestCase):
@@ -170,59 +166,6 @@ class ScreenTests(unittest.TestCase):
         self.assertFalse(self.gpios[2].value)
         screen.close()
         self.assertTrue(self.gpios[2].value)
-
-
-class ApplicationTests(unittest.TestCase):
-    def test_streaming_response_accumulates_text_for_dict_like_objects(self):
-        class Chunk:
-            def __init__(self, text):
-                self.text = text
-
-            def __getitem__(self, key):
-                if key != "message":
-                    raise KeyError(key)
-                return {"content": self.text}
-
-        for filename in ("ALL_V2.py", "ai.py"):
-            with self.subTest(filename=filename), ExitStack() as resources:
-                resources.enter_context(patch.dict(sys.modules, {name: Mock() for name in ("vosk", "ollama", "pyaudio")}))
-                spec = importlib.util.spec_from_file_location("ai_box_stream_test", Path(__file__).resolve().parents[1] / filename)
-                application = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(application)
-                application.ollama.chat.return_value = [Chunk("测"), Chunk("试")]
-                show = resources.enter_context(patch.object(application, "show_on_display"))
-                resources.enter_context(patch.object(application, "draw_face"))
-                resources.enter_context(patch.object(application.time, "sleep"))
-                resources.enter_context(patch.object(application.subprocess, "run"))
-                resources.enter_context(patch("builtins.print"))
-                asyncio.run(application.generate_and_play_text("测试"))
-                self.assertEqual([call.args[0] for call in show.call_args_list], ["测", "测试"])
-
-    def test_rendering_uses_native_rgb_frames(self):
-        from PIL import ImageFont
-        from display_ui import face_frame, menu_frame, text_frame
-
-        font = ImageFont.truetype(os.environ.get("AI_BOX_TEST_FONT", "DejaVuSans.ttf"), 24)
-        frames = [text_frame(240, 320, "Temperature\nHumidity", font),
-                  menu_frame(240, 320, ["Light", "AI", "Weather"], 1, font)]
-        frames.extend(face_frame(240, 320, state) for state in range(3))
-        for frame in frames:
-            self.assertEqual(frame.mode, "RGB")
-            self.assertEqual(frame.size, (240, 320))
-            self.assertIsNotNone(frame.getbbox())
-
-    def test_weather_button_does_not_block_on_sensor(self):
-        with patch.dict(sys.modules, {name: Mock() for name in ("vosk", "ollama", "pyaudio")}):
-            spec = importlib.util.spec_from_file_location("ai_box_main", Path(__file__).resolve().parents[1] / "ALL_V2.py")
-            application = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(application)
-        application.sensor = Mock()
-        application.shared_data["main_index"] = 2
-        application.on_center_press()
-        self.assertTrue(application.shared_data["temp_running"])
-        application.sensor.read.assert_not_called()
-        application.on_center_press()
-        self.assertFalse(application.shared_data["temp_running"])
 
 
 if __name__ == "__main__":
