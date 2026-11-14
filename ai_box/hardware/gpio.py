@@ -1,4 +1,4 @@
-"""@brief Linux sysfs GPIO access using bank labels and bank-local offsets."""
+"""! @brief Linux sysfs GPIO access using bank labels and bank-local offsets."""
 
 import errno
 import os
@@ -9,7 +9,13 @@ GPIO_ROOT = Path("/sys/class/gpio")
 
 
 def gpio_number(bank, offset):
-    """@brief Resolve a Rockchip bank/offset without assuming gpiochip numbering."""
+    """! @brief Resolve a Rockchip bank/offset without assuming gpiochip numbering.
+    @param bank Rockchip GPIO bank number.
+    @param offset Pin offset within the bank.
+    @return Linux sysfs GPIO number.
+    @exception OSError If the bank cannot be identified uniquely.
+    @exception ValueError If the offset is outside the bank.
+    """
     matches = [chip for chip in GPIO_ROOT.glob("gpiochip*")
                if (chip / "label").read_text().strip() == "gpio{}".format(bank)]
     if len(matches) != 1:
@@ -21,9 +27,14 @@ def gpio_number(bank, offset):
 
 
 class GPIO:
-    """@brief Own one sysfs GPIO; initial=None selects input, otherwise output."""
+    """! @brief Own one sysfs GPIO; initial=None selects input, otherwise output."""
 
     def __init__(self, bank, offset, initial=None):
+        """! @brief Export a GPIO and configure its direction.
+        @param bank Rockchip GPIO bank number.
+        @param offset Pin offset within the bank.
+        @param initial None for input, or the initial output level as a boolean.
+        """
         self._number = gpio_number(bank, offset)
         self._fd = None
         self._output = initial is not None
@@ -43,7 +54,7 @@ class GPIO:
 
     @property
     def value(self):
-        """@brief Read the physical GPIO level."""
+        """! @brief Read the physical GPIO level."""
         if self._fd is None:
             raise ValueError("GPIO is closed")
         os.lseek(self._fd, 0, os.SEEK_SET)
@@ -51,14 +62,16 @@ class GPIO:
 
     @value.setter
     def value(self, level):
-        """@brief Set the physical level of an output GPIO."""
+        """! @brief Set the physical level of an output GPIO.
+        @param level Output level; truthy values set the pin high.
+        """
         if self._fd is None or not self._output:
             raise ValueError("GPIO is closed or configured as input")
         os.lseek(self._fd, 0, os.SEEK_SET)
         os.write(self._fd, b"1" if level else b"0")
 
     def close(self):
-        """@brief Release only the GPIO exported by this instance."""
+        """! @brief Release only the GPIO exported by this instance."""
         if self._fd is not None:
             os.close(self._fd)
             self._fd = None

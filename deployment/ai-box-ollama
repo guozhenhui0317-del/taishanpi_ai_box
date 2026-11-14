@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+card_models=/mnt/modelsd/ollama-models
+if [ -r /etc/default/ai-box ]; then
+    . /etc/default/ai-box
+fi
+case "${AI_BOX_LLM_MODEL:-qwen2:0.5b}" in
+    qwen2:0.5b)
+        model_manifest=manifests/registry.ollama.ai/library/qwen2/0.5b
+        model_blob=blobs/sha256-8de95da68dc485c0889c205384c24642f83ca18d089559c977ffc6a3972a71a8
+        ;;
+    deepseek-r1:1.5b)
+        model_manifest=manifests/registry.ollama.ai/library/deepseek-r1/1.5b
+        model_blob=blobs/sha256-aabd4debf0c8f08881923f2c25fc0fdeed24435271c2b3e92c4af36704040dbc
+        ;;
+    *) echo '不支持的 AI 模型' >&2; exit 1 ;;
+esac
+if ! mountpoint -q /mnt/modelsd || [ ! -r "$card_models/$model_manifest" ] || [ ! -r "$card_models/$model_blob" ]; then
+    echo 'SD 卡未挂载或 AI 模型缺失' >&2
+    exit 1
+fi
+
+mkdir -p /home/linaro/.cache/ollama-ai-box
+export OLLAMA_HOST=127.0.0.1:11434
+export OLLAMA_MODELS="$card_models"
+export OLLAMA_TMPDIR=/home/linaro/.cache/ollama-ai-box
+exec /opt/ollama/ollama-v0.1.48 serve

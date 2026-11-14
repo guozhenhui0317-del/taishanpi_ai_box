@@ -1,71 +1,83 @@
 # 泰山派 AI Box
 
-立创泰山派 RK3566 的菜单、LED、温湿度与语音 AI 程序，使用 **AHT30（I2C2）** 和
-**ST7789（SPI3 CS0，240×320）**。屏幕需要方案 B（spidev）的内核和设备树。
+基于立创泰山派 RK3566，使用官方 3.1 寸 MIPI 触摸屏与语音 AI。
+硬件接线见[硬件说明](docs/hardware.md)，源码结构和函数讲解见[代码学习指南](docs/代码学习指南.md)。
+
+## 使用
+
+在适配的 Debian 图形桌面中运行：
+
+```sh
+python3 -m ai_box run       # 触摸菜单；mipi 是同义命令
+python3 -m ai_box voice     # 启动后直接进入语音助手
+python3 -m ai_box --help
+```
+
+主界面显示应用图标，点击“AI助手”“天气”“小智联网”“网络设置”或“旋转屏幕”即可打开对应功能。
+天气和语音界面点击屏幕返回主界面，网络设置使用页面上的“返回”按钮。每次点击“旋转屏幕”图标
+旋转 90°，依次循环四个方向；触摸方向同步变化，方向会在重启后保留。此设置只影响 AI Box 界面，
+不改变桌面方向。
+
+“天气”页面显示成都的网络天气。语音询问“今天天气怎么样”
+或“明天天气怎么样”会直接查询成都天气。天气数据
+来自 [Open-Meteo](https://open-meteo.com/)，联网失败时会显示提示。
+
+选择“网络设置”可扫描并连接附近的 2.4 GHz Wi-Fi 或手机热点。点击网络后，使用屏幕键盘输入
+密码并点击“连接”；已保存的网络可直接选择。键盘上的“大小写”和“符号”用于切换输入，密码
+由系统网络管理器保存。支持开放网络和 WPA/WPA2 个人网络，切换网络后开发板 IP 可能发生变化。
+
+菜单需要 Pillow、中文字体和图形桌面；语音助手还需要模型、音频设备和服务，详见
+[运行环境说明](docs/buildroot.md)。选择语音 AI 时才加载语音依赖。
+
+主菜单中的“AI助手”使用 SD 卡上的本地模型；“小智联网”连接小智官方服务，
+首次使用时请在 [小智控制台](https://xiaozhi.me/) 添加设备并输入屏幕显示的激活码。
+联网模式点击图标后开始对话，点击屏幕退出；录音会发送给官方服务处理，
+该模式不需要 SD 卡。语音唤醒、设备控制和回声消除尚未实现。
+
+## 查看调试信息
+
+开发板开机自动启动 AI Box 后，在终端实时查看本次运行的日志：
+
+```sh
+sudo tail -F /run/ai-box/ai-box.log
+```
+
+日志包括识别出的语音文字、模型回复、处理耗时和错误。按 Ctrl+C 停止查看，不会关闭 AI Box。
+日志保存在内存文件系统中，重启后清除；从终端手动启动程序时，日志直接输出到该终端。
+
+如果尚未连接喇叭，可以在 `/etc/default/ai-box` 中设置 `AI_BOX_SPEECH=0`，跳过语音播报并尽快
+恢复收音。接入喇叭后把该值改为 `1`，再重启 AI Box 即可启用播报。
+
+在 `/etc/default/ai-box` 中设置 `AI_BOX_LLM_MODEL=deepseek-r1:1.5b` 并重启 AI Box，
+即可试用 SD 卡上的 DeepSeek；设置为 `qwen2:0.5b` 可切回原模型。DeepSeek 使用 4 个 CPU
+线程推理，屏幕实时显示“正在思考”，随后显示正式回答；语音只播报正式回答，最近两轮
+对话也只保存正式回答。显示思考内容可以看到生成进度，最终回答仍可能需要较长时间。
+
+正式回答会按标点分段播报。离线中文播报使用 Piper，语音模型及配置位于
+`/mnt/modelsd/piper-voices/`，运行程序及兼容库位于 `/opt/ai-box/tts-runtime/`；
+SD 卡未挂载或语音模型缺失时会报错。每段播报需要重新加载语音模型，段与段之间可能有延迟。
 
 ## 项目结构
 
 ```text
-ai_box/
-  __main__.py       # 统一命令入口
-  app.py            # 菜单、按键与功能切换
-  voice.py          # 语音识别、AI 回复与播报
-  ui.py             # 文本、菜单与表情绘制
-  diagnostics.py    # 传感器、屏幕和 LED 自检
-  hardware/         # AHT30、ST7789、Linux GPIO 驱动
-docs/
-  hardware.md       # 接线、固件要求和硬件参数
-  buildroot.md      # 运行依赖与当前固件的限制
-tests/              # 模拟硬件测试
-requirements.txt    # 完整程序的 Python 依赖
+ai_box/              # 菜单、MIPI 触摸和语音助手
+ai_box/hardware/     # Linux GPIO 驱动
+docs/                # 硬件接线和运行环境
+tests/               # 不访问实际硬件的自动化测试
+requirements.txt     # Python 依赖
 ```
-
-## 运行
-
-将仓库复制到开发板，在仓库根目录执行。先按[硬件说明](docs/hardware.md)检查接线，
-再分别运行自检；每次只运行一个占用相同引脚的程序。
-
-```sh
-python3 -m ai_box --help  # 查看命令，不需要硬件或额外 Python 库
-python3 -m ai_box sensor # 每两秒读取温湿度，Ctrl+C 退出
-python3 -m ai_box screen # 红、绿、蓝、白各显示两秒，然后退出
-python3 -m ai_box led    # 亮五秒、灭五秒循环，Ctrl+C 退出
-```
-
-`sensor` 和 `led` 只需要 Python 标准库；`screen` 还需要 `spidev`。
-使用有设备访问权限的用户运行，当前 Buildroot 可使用 root。
-
-准备好 Pillow、中文字体和 spidev 后，启动菜单：
-
-```sh
-export AI_BOX_FONT=/实际路径/中文字体.ttc
-python3 -m ai_box run
-```
-
-省略 `run` 也会启动菜单。菜单中的 LED 和温湿度功能可独立使用；选择语音 AI 时才加载
-语音依赖。独立语音入口为 `python3 -m ai_box voice`，所需模型、音频组件和服务见
-[运行环境说明](docs/buildroot.md)。
-
-旧入口 `ALL_V2.py`、`ai.py`、`AHT30_test.py`、`screen_test.py`、`led_test.py`
-已分别统一为 `run`、`voice`、`sensor`、`screen`、`led` 子命令。
-
-**当前已打包的 Buildroot 尚缺 Pillow、中文字体和完整语音 AI 依赖。** 可先执行硬件自检；
-目录整理不会修改或重新打包固件。程序尚未完成开发板实测，屏幕参数和完整语音链路仍需验证。
 
 ## 开发验证
 
-在开发机安装 Pillow，并准备 DejaVuSans.ttf 后运行：
+安装 Pillow 和 DejaVuSans 字体后运行：
 
 ```sh
 python3 -m unittest discover -s tests -v
 ```
 
-可用 `AI_BOX_TEST_FONT=/实际路径/字体.ttf` 指定测试字体。测试模拟 I²C、SPI 和 GPIO，
-不会访问真实硬件，也不要求安装语音 AI 库。目标解释器为 Python 3.8。
+可用 `AI_BOX_TEST_FONT=/实际路径/字体.ttf` 指定测试字体。自动测试模拟硬件，不能代替实机检查。
 
 ## 来源
 
 基于 [JasonYANG170/ai-box](https://gitee.com/JasonYANG170/ai-box)，上游基准提交为
-`ae631bef31e6e27ccddc0ac1d23fe29fcb25c2aa`。原项目使用 AHT10/AHTx0 和 SSD1306；
-本版本适配 AHT30 与 ST7789，并使用独立的 Linux GPIO 驱动。未使用的随仓库附带的
-Blinka 和 platformdetect 文件已移除。
+`ae631bef31e6e27ccddc0ac1d23fe29fcb25c2aa`。

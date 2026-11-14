@@ -1,0 +1,13 @@
+#!/bin/bash
+## @brief Synthesize one Chinese speech segment using the SD-card voice model.
+set -o pipefail
+runtime=/opt/ai-box/tts-runtime
+model=/mnt/modelsd/piper-voices/zh_CN-huayan-medium.onnx
+if ! mountpoint -q /mnt/modelsd || [[ ! -f "$model" || ! -f "$model.json" ]]; then
+    echo 'SD card or Chinese speech model is missing' >&2
+    exit 1
+fi
+printf '%s\n' "$1" | "$runtime/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1" \
+    --library-path "$runtime/lib/aarch64-linux-gnu:$runtime/usr/lib/aarch64-linux-gnu:$runtime/piper:/lib/aarch64-linux-gnu" \
+    "$runtime/piper/piper" --model "$model" --espeak_data "$runtime/piper/espeak-ng-data" \
+    --output_raw --quiet | aplay -q -f S16_LE -c 1 -r 22050

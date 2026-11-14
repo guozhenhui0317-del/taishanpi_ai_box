@@ -1,31 +1,37 @@
-"""@brief Menu, buttons and application lifecycle for the Taishanpi AI Box."""
+"""! @brief Menu, buttons and application lifecycle for the Taishanpi AI Box."""
 
 from contextlib import ExitStack
 import threading
 import time
+import traceback
 
-from .hardware.aht30 import AHT30
-from .hardware.gpio import GPIO
-from .hardware.st7789 import ST7789
-from .ui import Screen, load_font
-from .voice import VoiceAssistant
+from .voice import VoiceAssistant, log
+from .weather import Forecast, forecast_text
 
 
-MAIN_MENU = ("手电筒", "AI助手", "天气")
-LIGHT_MENU = ("开启", "关闭", "返回")
+MAIN_MENU = ("AI助手", "天气")
 
 
 class Application:
-    """@brief Own menu state and coordinate the button, display and voice tasks."""
+    """! @brief Own menu state and coordinate the button, display and voice tasks."""
 
-    def __init__(self, screen, sensor, led, buttons):
+    def __init__(self, screen, buttons, rotate=None, network=None):
+        """! @brief Initialize the application with its hardware interfaces.
+        @param screen Display interface used for menus and messages.
+        @param buttons GPIO inputs ordered left, center, and right.
+        @param rotate Optional callback that switches the display orientation.
+        @param network Optional touch-operated network settings panel.
+        """
         self.screen = screen
-        self.sensor = sensor
-        self.led = led
         self.buttons = buttons
+        self.rotate = rotate
+        self.main_menu = MAIN_MENU + ("小智联网",)
+        self.network = network
+        if network:
+            self.main_menu += ("网络设置",)
+        if rotate:
+            self.main_menu += ("旋转屏幕",)
         self.index = 0
-        self.light_index = 0
-        self.in_light_menu = False
         self.weather = False
         self.dirty = True
         self._last_sample = float("-inf")
@@ -37,88 +43,146 @@ class Application:
         self._voice_thread = None
         self._voice = None
         self._button_error = None
+        self._error_visible = False
+        self._forecast = Forecast()
+        self._forecast_text = "成都天气获取中…"
+        self._forecast_next = 0
+        self._forecast_thread = None
 
     def move(self, delta):
-        """@brief Move left/right in the menu, leaving the weather page if open."""
+        """! @brief Move left/right in the menu, leaving the weather page if open.
+        @param delta Signed change in the selected menu index.
+        """
         with self._lock:
             if self._voice_running.is_set():
                 return
             self.weather = False
-            if self.in_light_menu:
-                self.light_index = max(0, min(len(LIGHT_MENU) - 1, self.light_index + delta))
-            else:
-                self.index = max(0, min(len(MAIN_MENU) - 1, self.index + delta))
+            self._error_visible = False
+            self.index = max(0, min(len(self.main_menu) - 1, self.index + delta))
             self.dirty = True
 
-    def select(self):
-        """@brief Handle the center button without measuring the sensor or loading AI."""
+    def select(self, index=None, touch=False):
+        """! @brief Open a selected app, or return from an active page.
+        @param index App tile index, or None for the selected hardware-button item.
+        @param touch True when invoked by a screen tap rather than a hardware button.
+        """
         with self._lock:
             if self._voice_running.is_set():
                 self._voice_stop.set()
-            elif self.in_light_menu:
-                if self.light_index == 2:
-                    self.in_light_menu = False
-                else:
-                    self.led.value = self.light_index == 0
-            elif self.index == 0:
-                self.in_light_menu = True
-                self.light_index = 0
-            elif self.index == 1:
-                self._voice_stop.clear()
-                self._voice_running.set()
-                self._voice_thread = threading.Thread(target=self._run_voice, daemon=True)
-                try:
-                    self._voice_thread.start()
-                except Exception:
-                    self._voice_thread = None
-                    self._voice_running.clear()
-                    raise
+            elif self.weather:
+                self.weather = False
+            elif self._error_visible:
+                self._error_visible = False
+            elif touch and index is None:
+                return
             else:
-                self.weather = not self.weather
-            self.dirty = True
+                if index is not None:
+                    if not 0 <= index < len(self.main_menu):
+                        return
+                    self.index = index
+                self._open_selected()
+            self.dirty = not self._error_visible
 
-    def weather_text(self):
-        """@brief Format one paired sensor measurement or a visible failure message."""
-        try:
-            temperature, humidity = self.sensor.read()
-            return "温度: {:.1f} C\n湿度: {:.1f} %".format(temperature, humidity)
-        except OSError as error:
-            print("AHT30: {}".format(error))
-            return "温湿度读取失败"
+    def _open_selected(self):
+        """! @brief Open the selected app while the application lock is held."""
+        if self.main_menu[self.index] in ("AI助手", "小智联网"):
+            mode = self.main_menu[self.index]
+            self.screen.set_voice_mode(True)
+            self.screen.text("语音助手启动中，请稍候")
+            self._voice_stop.clear()
+            self._voice_running.set()
+            self._voice_thread = threading.Thread(target=self._run_voice, args=(mode,), daemon=True)
+            try:
+                self._voice_thread.start()
+            except Exception:
+                self._voice_thread = None
+                self._voice_running.clear()
+                self.screen.set_voice_mode(False)
+                raise
+        elif self.index == 1:
+            self.weather = True
+        elif self.main_menu[self.index] == "网络设置":
+            self.network.open()
+        else:
+            try:
+                self.rotate()
+            except OSError as error:
+                print("屏幕方向保存失败: {}".format(error))
+                self.screen.text("屏幕方向保存失败\n点击屏幕返回")
+                self._error_visible = True
 
     def handle_voice_command(self, text):
-        """@brief Handle the original LED/weather commands; return False for chat."""
-        if "开启" in text:
-            self.led.value = True
-            reply = "开灯"
-        elif "停止" in text:
-            self.led.value = False
-            reply = "关灯"
-        elif any(word in text for word in ("天气", "温度", "湿度")):
-            reply = self.weather_text()
+        """! @brief Answer online weather commands without invoking the language model.
+        @param text Recognized speech to inspect for a hardware command.
+        @return True if handled locally, or False if the text should go to chat.
+        """
+        words = text.replace(" ", "")
+        if any(word in words for word in ("室内", "传感器")):
+            return False
+        if any(word in words for word in ("天气", "下雨", "温度", "湿度")):
+            self.screen.text("正在查询成都天气…")
+            reply = forecast_text(self._forecast.get(), tomorrow="明天" in words)
+            if self._voice_stop.is_set():
+                return True
         else:
             return False
-        self.screen.text(reply)
+        log("天气查询结果：{}".format(reply.replace("\n", "，")))
+        self.screen.text("识别：{}\n{}".format(text, reply))
         self._voice.speak(reply)
         return True
 
-    def _run_voice(self):
-        """@brief Load AI on demand and restore the menu when the session ends."""
+    def _update_forecast(self):
+        """! @brief Refresh the weather page without blocking touch navigation."""
+        data = self._forecast.get()
+        text = forecast_text(data)
+        with self._lock:
+            self._forecast_text = text
+            self._forecast_next = time.monotonic() + (60 if data is not None else 15)
+            if self.weather and not self._voice_running.is_set():
+                self.dirty = True
+
+    def _start_forecast(self):
+        """! @brief Start at most one background weather refresh at a time."""
+        with self._lock:
+            if time.monotonic() < self._forecast_next or (
+                    self._forecast_thread is not None and self._forecast_thread.is_alive()):
+                return
+            self._forecast_next = time.monotonic() + 60
+            self._forecast_thread = threading.Thread(target=self._update_forecast, daemon=True)
+            self._forecast_thread.start()
+
+    def _run_voice(self, mode="AI助手"):
+        """! @brief Load AI on demand and restore the menu when the session ends."""
+        error_message = None
+        log("语音助手启动")
         try:
             with ExitStack() as cleanup:
-                self._voice = VoiceAssistant(self.screen)
+                if mode == "小智联网":
+                    from .xiaozhi import XiaozhiAssistant
+                    self._voice = XiaozhiAssistant(self.screen)
+                else:
+                    self._voice = VoiceAssistant(self.screen)
                 cleanup.callback(self._voice.close)
                 self._voice.run(self._voice_stop, self.handle_voice_command)
         except Exception as error:
-            print("语音助手: {}".format(error))
+            error_message = "语音助手出错：{}\n点击屏幕返回".format(error)
+            log("语音助手出错：{}: {}".format(type(error).__name__, error))
+            traceback.print_exc()
         finally:
+            log("语音助手退出")
             self._voice = None
             with self._lock:
                 self._voice_running.clear()
-                self.dirty = True
+                self.screen.set_voice_mode(False)
+                if error_message:
+                    self.screen.text(error_message)
+                    self._error_visible = True
+                    self.dirty = False
+                else:
+                    self.dirty = True
 
     def _poll_buttons(self):
-        """@brief Detect debounced rising edges independently of sensor and AI work."""
+        """! @brief Detect debounced rising edges independently of weather and AI work."""
         previous = [False] * len(self.buttons)
         last_action = float("-inf")
         try:
@@ -139,34 +203,38 @@ class Application:
             self._stop.set()
 
     def render(self):
-        """@brief Refresh a changed menu or sample the weather page every two seconds."""
+        """! @brief Refresh a changed menu or sample the weather page every two seconds."""
         with self._lock:
-            if self._voice_running.is_set():
+            if self._voice_running.is_set() or (self.network and self.network.active):
                 return
             weather, dirty = self.weather, self.dirty
-            items = LIGHT_MENU if self.in_light_menu else MAIN_MENU
-            index = self.light_index if self.in_light_menu else self.index
+            items, index = self.main_menu, self.index
             self.dirty = False
         if weather:
             if not dirty and time.monotonic() - self._last_sample < 2:
                 return
-            text = self.weather_text()
+            self._start_forecast()
+            text = self._forecast_text
             self._last_sample = time.monotonic()
         elif not dirty:
             return
         with self._lock:
-            current_items = LIGHT_MENU if self.in_light_menu else MAIN_MENU
-            current_index = self.light_index if self.in_light_menu else self.index
-            if self._voice_running.is_set() or (weather, items, index) != (
+            current_items, current_index = self.main_menu, self.index
+            if self._voice_running.is_set() or (self.network and self.network.active) or (weather, items, index) != (
                     self.weather, current_items, current_index):
                 return
             if weather:
-                self.screen.text(text)
+                self.screen.weather(text)
             else:
                 self.screen.menu(items, index)
 
+    def refresh_menu(self):
+        """! @brief Redraw the menu after a touch-operated settings panel closes."""
+        with self._lock:
+            self.dirty = True
+
     def run(self):
-        """@brief Poll buttons and render views until interrupted or a GPIO read fails."""
+        """! @brief Poll buttons and render views until interrupted or a GPIO read fails."""
         self._button_thread = threading.Thread(target=self._poll_buttons, daemon=True)
         self._button_thread.start()
         try:
@@ -179,41 +247,10 @@ class Application:
             self.close()
 
     def close(self):
-        """@brief Stop and join workers before their hardware resources are released."""
+        """! @brief Stop and join workers before their hardware resources are released."""
         self._stop.set()
         if self._button_thread is not None and self._button_thread.ident is not None:
             self._button_thread.join()
         self._voice_stop.set()
         if self._voice_thread is not None and self._voice_thread.ident is not None:
             self._voice_thread.join()
-
-
-def main(voice_only=False):
-    """@brief Open the required hardware once and release it even on startup failure."""
-    font = load_font()
-    with ExitStack() as cleanup:
-        display = ST7789()
-        cleanup.callback(display.close)
-        screen = Screen(display, font)
-        if voice_only:
-            stop = threading.Event()
-            voice = VoiceAssistant(screen)
-            cleanup.callback(voice.close)
-            try:
-                voice.run(stop)
-            finally:
-                stop.set()
-        else:
-            sensor = AHT30()
-            cleanup.callback(sensor.close)
-            led = GPIO(0, 15, initial=False)
-            cleanup.callback(led.close)
-            cleanup.callback(setattr, led, "value", False)
-            buttons = []
-            for offset in (1, 2, 3):
-                button = GPIO(3, offset)
-                cleanup.callback(button.close)
-                buttons.append(button)
-            app = Application(screen, sensor, led, buttons)
-            cleanup.callback(app.close)
-            app.run()

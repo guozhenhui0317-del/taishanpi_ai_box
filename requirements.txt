@@ -1,5 +1,5 @@
 Pillow>=8.4
-spidev>=3.2
 vosk
 ollama
 PyAudio
+websockets>=15,<18

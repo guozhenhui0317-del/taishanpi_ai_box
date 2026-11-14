@@ -1,1 +1,1 @@
-"""@brief Taishanpi AI Box application and hardware support."""
+"""! @brief Taishanpi AI Box application and hardware support."""

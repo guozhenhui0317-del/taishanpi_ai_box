@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+if [ ! -t 1 ]; then
+    install -d -m 0700 /run/ai-box
+    umask 077
+    exec > /run/ai-box/ai-box.log 2>&1
+fi
+if [ -r /etc/default/ai-box ]; then
+    . /etc/default/ai-box
+fi
+export AI_BOX_SPEECH
+export AI_BOX_LLM_MODEL="${AI_BOX_LLM_MODEL:-qwen2:0.5b}"
+export HOME=/home/linaro
+export AI_BOX_FONT_SIZE=32
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONUNBUFFERED=1
+exec /usr/local/bin/ai-box mipi

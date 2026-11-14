@@ -1,1 +1,1 @@
-"""@brief Linux drivers for the board's sensor, display and GPIOs."""
+"""! @brief Linux GPIO drivers for the board."""
