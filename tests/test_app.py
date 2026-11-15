@@ -13,21 +13,19 @@ from ai_box import app
 class ApplicationTests(unittest.TestCase):
     def setUp(self):
         self.screen = Mock()
-        self.application = app.Application(self.screen, [])
+        self.application = app.Application(self.screen)
         self.application._start_forecast = Mock()
 
     def test_weather_page_does_not_require_a_sensor(self):
-        self.application.move(1)
-        self.application.select()
+        self.application.select(1)
         self.application.render()
         self.screen.weather.assert_called_once_with("成都天气获取中…")
         self.application.select()
         self.assertFalse(self.application.weather)
 
-    def test_ai_owns_the_screen_until_center_button_requests_stop(self):
+    def test_ai_owns_the_screen_until_touch_requests_stop(self):
         self.application._voice_running.set()
         self.application.render()
-        self.application.move(1)
         self.assertEqual(self.application.index, 0)
         self.screen.menu.assert_not_called()
         self.application.select()
@@ -45,7 +43,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertFalse(self.application._voice_running.is_set())
         self.assertFalse(self.application.dirty)
         self.screen.text.assert_called_once_with("语音助手出错：microphone unavailable\n点击屏幕返回")
-        self.application.move(1)
+        self.application.select()
         self.assertTrue(self.application.dirty)
 
 

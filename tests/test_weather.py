@@ -56,7 +56,7 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
 
     def test_failed_page_refresh_retries_after_fifteen_seconds(self):
-        application = Application(Mock(), [])
+        application = Application(Mock())
         application._forecast.get = Mock(return_value=None)
         with patch("ai_box.app.time.monotonic", return_value=100):
             application._update_forecast()
@@ -64,7 +64,7 @@ class ForecastTests(unittest.TestCase):
 
     def test_voice_weather_uses_online_data(self):
         screen = Mock()
-        application = Application(screen, [])
+        application = Application(screen)
         application._forecast.get = Mock(return_value=sample_forecast())
         application._voice = Mock()
         self.assertTrue(application.handle_voice_command("明 天 天 气 怎么样"))
@@ -73,7 +73,7 @@ class ForecastTests(unittest.TestCase):
 
     def test_weather_fetch_does_not_block_navigation(self):
         screen = Mock()
-        application = Application(screen, [])
+        application = Application(screen)
         started, release = threading.Event(), threading.Event()
 
         def get_forecast():
@@ -82,14 +82,13 @@ class ForecastTests(unittest.TestCase):
             return sample_forecast()
 
         application._forecast.get = get_forecast
-        application.move(1)
-        application.select()
+        application.select(1)
         try:
             application.render()
             self.assertTrue(started.wait(1))
-            application.move(-1)
+            application.select()
             application.render()
-            screen.menu.assert_called_with(application.main_menu, 0)
+            screen.menu.assert_called_with(application.main_menu, 1)
         finally:
             release.set()
             application._forecast_thread.join(3)

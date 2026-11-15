@@ -70,11 +70,10 @@ class MipiRotationTests(unittest.TestCase):
 
     def test_rotation_menu_has_no_light_and_invokes_callback(self):
         rotate = Mock()
-        application = app.Application(Mock(), [], rotate=rotate)
+        application = app.Application(Mock(), rotate=rotate)
         self.assertEqual(application.main_menu, ("AI助手", "天气", "小智联网", "旋转屏幕"))
-        application.move(3)
-        application.select()
-        application.select()
+        application.select(3)
+        application.select(3)
         self.assertEqual(rotate.call_count, 2)
         self.assertFalse(application.weather)
 

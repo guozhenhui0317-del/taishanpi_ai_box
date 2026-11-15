@@ -37,22 +37,22 @@ class LauncherTests(unittest.TestCase):
     def test_taps_open_apps_and_return_without_using_neighboring_tiles(self):
         screen, network, rotate = Mock(), Mock(), Mock()
         network.active = False
-        app = Application(screen, [], rotate=rotate, network=network)
+        app = Application(screen, rotate=rotate, network=network)
         self.assertEqual(app.main_menu, ("AI助手", "天气", "小智联网", "网络设置", "旋转屏幕"))
-        app.select(None, touch=True)
+        app.select(None)
         network.open.assert_not_called()
-        app.select(1, touch=True)
+        app.select(1)
         self.assertTrue(app.weather)
-        app.select(None, touch=True)
+        app.select(None)
         self.assertFalse(app.weather)
-        app.select(3, touch=True)
+        app.select(3)
         network.open.assert_called_once()
-        app.select(4, touch=True)
+        app.select(4)
         rotate.assert_called_once()
         with patch("ai_box.app.threading.Thread"):
-            app.select(0, touch=True)
+            app.select(0)
         screen.set_voice_mode.assert_called_with(True)
-        app.select(None, touch=True)
+        app.select(None)
         self.assertTrue(app._voice_stop.is_set())
 
     def test_app_frames_include_a_return_bar(self):

@@ -1,4 +1,4 @@
-"""! @brief Menu, buttons and application lifecycle for the Taishanpi AI Box."""
+"""! @brief Menu and application lifecycle for the Taishanpi AI Box."""
 
 from contextlib import ExitStack
 import threading
@@ -13,17 +13,15 @@ MAIN_MENU = ("AI助手", "天气")
 
 
 class Application:
-    """! @brief Own menu state and coordinate the button, display and voice tasks."""
+    """! @brief Own menu state and coordinate display and voice tasks."""
 
-    def __init__(self, screen, buttons, rotate=None, network=None):
+    def __init__(self, screen, rotate=None, network=None):
         """! @brief Initialize the application with its hardware interfaces.
         @param screen Display interface used for menus and messages.
-        @param buttons GPIO inputs ordered left, center, and right.
         @param rotate Optional callback that switches the display orientation.
         @param network Optional touch-operated network settings panel.
         """
         self.screen = screen
-        self.buttons = buttons
         self.rotate = rotate
         self.main_menu = MAIN_MENU + ("小智联网",)
         self.network = network
@@ -39,32 +37,17 @@ class Application:
         self._stop = threading.Event()
         self._voice_stop = threading.Event()
         self._voice_running = threading.Event()
-        self._button_thread = None
         self._voice_thread = None
         self._voice = None
-        self._button_error = None
         self._error_visible = False
         self._forecast = Forecast()
         self._forecast_text = "成都天气获取中…"
         self._forecast_next = 0
         self._forecast_thread = None
 
-    def move(self, delta):
-        """! @brief Move left/right in the menu, leaving the weather page if open.
-        @param delta Signed change in the selected menu index.
-        """
-        with self._lock:
-            if self._voice_running.is_set():
-                return
-            self.weather = False
-            self._error_visible = False
-            self.index = max(0, min(len(self.main_menu) - 1, self.index + delta))
-            self.dirty = True
-
-    def select(self, index=None, touch=False):
-        """! @brief Open a selected app, or return from an active page.
-        @param index App tile index, or None for the selected hardware-button item.
-        @param touch True when invoked by a screen tap rather than a hardware button.
+    def select(self, index=None):
+        """! @brief Open a touched app, or return from an active page.
+        @param index Touched app tile index, or None outside the tiles.
         """
         with self._lock:
             if self._voice_running.is_set():
@@ -73,13 +56,10 @@ class Application:
                 self.weather = False
             elif self._error_visible:
                 self._error_visible = False
-            elif touch and index is None:
+            elif index is None or not 0 <= index < len(self.main_menu):
                 return
             else:
-                if index is not None:
-                    if not 0 <= index < len(self.main_menu):
-                        return
-                    self.index = index
+                self.index = index
                 self._open_selected()
             self.dirty = not self._error_visible
 
@@ -181,27 +161,6 @@ class Application:
                 else:
                     self.dirty = True
 
-    def _poll_buttons(self):
-        """! @brief Detect debounced rising edges independently of weather and AI work."""
-        previous = [False] * len(self.buttons)
-        last_action = float("-inf")
-        try:
-            while not self._stop.is_set():
-                for index, button in enumerate(self.buttons):
-                    pressed = button.value
-                    now = time.monotonic()
-                    if pressed and not previous[index] and now - last_action >= 0.05:
-                        if index == 1:
-                            self.select()
-                        else:
-                            self.move(-1 if index == 0 else 1)
-                        last_action = now
-                    previous[index] = pressed
-                self._stop.wait(0.01)
-        except Exception as error:
-            self._button_error = error
-            self._stop.set()
-
     def render(self):
         """! @brief Refresh a changed menu or sample the weather page every two seconds."""
         with self._lock:
@@ -234,23 +193,17 @@ class Application:
             self.dirty = True
 
     def run(self):
-        """! @brief Poll buttons and render views until interrupted or a GPIO read fails."""
-        self._button_thread = threading.Thread(target=self._poll_buttons, daemon=True)
-        self._button_thread.start()
+        """! @brief Render views until the application is stopped."""
         try:
             while not self._stop.is_set():
                 self.render()
                 self._stop.wait(0.1)
-            if self._button_error is not None:
-                raise self._button_error
         finally:
             self.close()
 
     def close(self):
         """! @brief Stop and join workers before their hardware resources are released."""
         self._stop.set()
-        if self._button_thread is not None and self._button_thread.ident is not None:
-            self._button_thread.join()
         self._voice_stop.set()
         if self._voice_thread is not None and self._voice_thread.ident is not None:
             self._voice_thread.join()

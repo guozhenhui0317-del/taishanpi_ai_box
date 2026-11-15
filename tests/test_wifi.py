@@ -62,9 +62,8 @@ class WifiTests(unittest.TestCase):
     def test_network_panel_is_available_from_the_menu(self):
         panel = Mock()
         panel.active = False
-        app = Application(Mock(), [], rotate=Mock(), network=panel)
-        app.move(3)
-        app.select()
+        app = Application(Mock(), rotate=Mock(), network=panel)
+        app.select(3)
         panel.open.assert_called_once()
 
 

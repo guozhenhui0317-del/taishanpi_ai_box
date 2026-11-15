@@ -115,9 +115,9 @@ def main(voice_only=False):
         display = TouchDisplay(root)
         screen = Screen(display, load_font())
         network = WifiPanel(screen)
-        app = Application(screen, [], rotate=display.rotate, network=network)
+        app = Application(screen, rotate=display.rotate, network=network)
         if voice_only:
-            app.select()
+            app.select(0)
         errors = Queue()
 
         def run_app():
@@ -138,7 +138,7 @@ def main(voice_only=False):
                     app.refresh_menu()
                 return
             index = menu_index_at(display.width, display.height, len(app.main_menu), x, y)
-            app.select(index, touch=True)
+            app.select(index)
 
         def refresh():
             display.refresh()
