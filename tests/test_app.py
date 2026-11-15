@@ -19,7 +19,7 @@ class ApplicationTests(unittest.TestCase):
     def test_weather_page_does_not_require_a_sensor(self):
         self.application.select(1)
         self.application.render()
-        self.screen.weather.assert_called_once_with("成都天气获取中…")
+        self.screen.weather.assert_called_once_with("正在更新成都天气…")
         self.application.select()
         self.assertFalse(self.application.weather)
 

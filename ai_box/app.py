@@ -81,6 +81,8 @@ class Application:
                 raise
         elif self.index == 1:
             self.weather = True
+            self._forecast_text = "正在更新成都天气…"
+            self._forecast_next = 0
         elif self.main_menu[self.index] == "网络设置":
             self.network.open()
         else:
@@ -113,11 +115,11 @@ class Application:
 
     def _update_forecast(self):
         """! @brief Refresh the weather page without blocking touch navigation."""
-        data = self._forecast.get()
-        text = forecast_text(data)
+        data = self._forecast.get(force=True)
+        text = forecast_text(data, show_details=True)
         with self._lock:
             self._forecast_text = text
-            self._forecast_next = time.monotonic() + (60 if data is not None else 15)
+            self._forecast_next = time.monotonic() + (600 if data is not None and not data.get("_stale") else 15)
             if self.weather and not self._voice_running.is_set():
                 self.dirty = True
 

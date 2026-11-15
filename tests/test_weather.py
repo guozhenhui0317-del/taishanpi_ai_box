@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 from urllib.error import URLError
 
 from ai_box.app import Application
-from ai_box.weather import Forecast, forecast_text
+from ai_box.weather import FALLBACK_URL, Forecast, forecast_text
 
 
 def sample_forecast():
@@ -23,13 +23,24 @@ def sample_forecast():
     }
 
 
+def sample_fallback():
+    """! @brief Return two days from the alternate provider."""
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    return {"current_condition": [{"temp_C": "15", "humidity": "72", "weatherCode": "176"}],
+            "weather": [{"date": (today + timedelta(days=day)).isoformat(),
+                         "mintempC": "11", "maxtempC": "18",
+                         "hourly": [{"time": "900", "weatherCode": "119", "chanceofrain": "20"},
+                                    {"time": "1200", "weatherCode": "149", "chanceofrain": "50"}]}
+                        for day in (0, 1)]}
+
+
 class ForecastTests(unittest.TestCase):
     def test_fetch_cache_and_tomorrow_format(self):
         data = sample_forecast()
         with patch("ai_box.weather.urlopen", return_value=io.BytesIO(json.dumps(data).encode())) as request:
             forecast = Forecast()
-            self.assertEqual(forecast.get(), data)
-            self.assertEqual(forecast.get(), data)
+            self.assertEqual(forecast.get()["daily"], data["daily"])
+            self.assertEqual(forecast.get()["daily"], data["daily"])
         request.assert_called_once()
         self.assertIn("成都现在多云", forecast_text(data))
         self.assertIn("成都明天中雨", forecast_text(data, tomorrow=True))
@@ -45,15 +56,56 @@ class ForecastTests(unittest.TestCase):
                 forecast = Forecast()
                 self.assertIsNone(forecast.get())
                 self.assertIsNone(forecast.get())
-                self.assertEqual(request.call_count, 2 if isinstance(response, Exception) else 1)
+                self.assertEqual(request.call_count, 2)
         self.assertIn("不可用", forecast_text(None))
 
-    def test_temporary_network_failure_is_retried(self):
-        data = sample_forecast()
+    def test_fallback_when_primary_service_times_out(self):
+        alternate = sample_fallback()
         with patch("ai_box.weather.urlopen", side_effect=[URLError("timeout"),
-                   io.BytesIO(json.dumps(data).encode())]) as request:
-            self.assertEqual(Forecast().get(), data)
+                   io.BytesIO(json.dumps(alternate).encode())]) as request:
+            data = Forecast().get()
         self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args.args[0], FALLBACK_URL)
+        self.assertEqual(data["_source"], "wttr.in")
+        self.assertIn("成都现在局部阵雨", forecast_text(data))
+        self.assertIn("成都明天中午烟霾", forecast_text(data, tomorrow=True))
+        self.assertIn("分时最高降雨概率 50%", forecast_text(data))
+
+    def test_failed_refresh_marks_recent_data_as_cached(self):
+        data = sample_forecast()
+        forecast = Forecast()
+        responses = [io.BytesIO(json.dumps(data).encode()), URLError("offline"), URLError("offline")]
+        with patch("ai_box.weather.urlopen", side_effect=responses):
+            first = forecast.get()
+            result = forecast.get(force=True)
+        self.assertTrue(result["_stale"])
+        self.assertEqual(result["_queried"], first["_queried"])
+        self.assertIn("更新失败，以下为缓存", forecast_text(result))
+        self.assertIn("上次查询", forecast_text(result))
+
+    def test_old_cached_data_is_not_misrepresented_as_current(self):
+        forecast = Forecast()
+        data = sample_forecast()
+        with patch("ai_box.weather.urlopen", return_value=io.BytesIO(json.dumps(data).encode())):
+            forecast.get()
+        forecast._updated -= 6 * 3600 + 1
+        with patch("ai_box.weather.urlopen", side_effect=URLError("offline")):
+            self.assertIsNone(forecast.get(force=True))
+
+    def test_reopening_page_shows_refresh_and_forces_request(self):
+        app = Application(Mock())
+        app._forecast_text = "old result"
+        app._forecast_next = float("inf")
+        app._forecast.get = Mock(return_value=sample_forecast())
+        app.select(1)
+        self.assertEqual(app._forecast_text, "正在更新成都天气…")
+        self.assertEqual(app._forecast_next, 0)
+        app._update_forecast()
+        app._forecast.get.assert_called_once_with(force=True)
+        app.select()
+        app.select(1)
+        self.assertEqual(app._forecast_text, "正在更新成都天气…")
+        self.assertEqual(app._forecast_next, 0)
 
     def test_failed_page_refresh_retries_after_fifteen_seconds(self):
         application = Application(Mock())
@@ -76,7 +128,7 @@ class ForecastTests(unittest.TestCase):
         application = Application(screen)
         started, release = threading.Event(), threading.Event()
 
-        def get_forecast():
+        def get_forecast(force=False):
             started.set()
             release.wait(3)
             return sample_forecast()
