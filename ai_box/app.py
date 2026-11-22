@@ -33,8 +33,8 @@ class Application:
         self.weather = False
         self.dirty = True
         self._last_sample = float("-inf")
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
+        self._lock = threading.Lock()  # 创建一个线程锁
+        self._stop = threading.Event()  # 创建一个信号标志
         self._voice_stop = threading.Event()
         self._voice_running = threading.Event()
         self._voice_thread = None
@@ -50,8 +50,8 @@ class Application:
         @param index Touched app tile index, or None outside the tiles.
         """
         with self._lock:
-            if self._voice_running.is_set():
-                self._voice_stop.set()
+            if self._voice_running.is_set():  # 如果声音线程已经启动
+                self._voice_stop.set() # 将声音线程停止信号设置为true
             elif self.weather:
                 self.weather = False
             elif self._error_visible:

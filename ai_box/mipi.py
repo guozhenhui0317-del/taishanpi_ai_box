@@ -29,10 +29,10 @@ class TouchDisplay:
         try:
             saved = ORIENTATION_PATH.read_text().strip()
             self.orientation = {"portrait": 0, "landscape": 90, "0": 0, "90": 90,
-                                "180": 180, "270": 270}.get(saved, 0)
+                                "180": 180, "270": 270}.get(saved, 0)  # 旋转角度
         except FileNotFoundError:
             self.orientation = 0
-        self._set_size()
+        self._set_size()  # 根据旋转角度设置实际的宽高
         self.frames = Queue(maxsize=1)
         self.label = tk.Label(root, background="black", borderwidth=0)
         self.label.pack(fill="both", expand=True)
@@ -126,10 +126,10 @@ def main(voice_only=False):
             except Exception as error:
                 errors.put(error)
 
-        worker = threading.Thread(target=run_app)
-        worker.start()
-        cleanup.callback(worker.join)
-        cleanup.callback(app.close)
+        worker = threading.Thread(target=run_app)  # 创建一个线程对象，并指定此对象启动后执行run_app()
+        worker.start() # 启动线程，让 run_app() 在后台执行
+        cleanup.callback(worker.join) # 这里不是立即等待线程结束，而是把 worker.join 登记为退出时要执行的清理操作。
+        cleanup.callback(app.close) # 同样是登记清理操作。退出时调用 app.close()
 
         def touch(event):
             x, y = display.touch_point(event)
@@ -147,8 +147,8 @@ def main(voice_only=False):
                 return
             root.after(30, refresh)
 
-        root.bind("<Button-1>", touch)
-        root.bind("<Escape>", lambda event: root.quit())
+        root.bind("<Button-1>", touch)  # 当 Tk 收到鼠标左键点击事件时，调用前面定义的 touch(event) 函数
+        root.bind("<Escape>", lambda event: root.quit()) # 按键盘上的 Esc 时，调用 root.quit()，让 Tk 的事件循环退出。
         root.protocol("WM_DELETE_WINDOW", root.quit)
         root.after(0, refresh)
         root.mainloop()
